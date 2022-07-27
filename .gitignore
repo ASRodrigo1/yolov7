@@ -21,6 +21,8 @@ sdist/
 var/
 wheels/
 datasets/
+detectron2/
+mish-cuda/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
