@@ -21,7 +21,7 @@ from tqdm import trange
 from yolov7.config import add_yolo_config
 
 # constants
-WINDOW_NAME = "COCO detections"
+WINDOW_NAME = "PLACAS detections"
 
 
 class DefaultPredictor:
@@ -48,14 +48,14 @@ class DefaultPredictor:
                 original_image = original_image[:, :, ::-1]
             height, width = original_image.shape[:2]
             image = self.aug.get_transform(original_image).apply_image(original_image)
-            print("image after transform: ", image.shape)
+            #print("image after transform: ", image.shape)
             image = torch.as_tensor(image.astype("float32").transpose(2, 0, 1))
             inputs = {"image": image, "height": height, "width": width}
             tic = time.time()
             # predictions, pure_t = self.model([inputs])
             predictions = self.model([inputs])
-            predictions = predictions[0]
             c = time.time() - tic
+            predictions = predictions[0]
             print("cost: {}, fps: {}".format(c, 1 / c))
             return predictions
 
@@ -105,14 +105,14 @@ def get_parser():
         "-c",
         "--confidence-threshold",
         type=float,
-        default=0.21,
+        default=0.3,
         help="Minimum score for instance predictions to be shown",
     )
     parser.add_argument(
         "-n",
         "--nms-threshold",
         type=float,
-        default=0.6,
+        default=0.2,
         help="Minimum score for instance predictions to be shown",
     )
     parser.add_argument(
@@ -167,7 +167,8 @@ def vis_res_fast(res, img, class_names, colors, thresh):
             thickness=2,
         )
     thickness = 1 if ins.has("pred_bit_masks") else 2
-    font_scale = 0.3 if ins.has("pred_bit_masks") else 0.4
+    #font_scale = 0.3 if ins.has("pred_bit_masks") else 0.4
+    font_scale=1.0
     if bboxes is not None:
         img = visualize_det_cv2_part(
             img,
@@ -204,7 +205,7 @@ if __name__ == "__main__":
     conf_thresh = cfg.MODEL.YOLO.CONF_THRESHOLD
     print("confidence thresh: ", conf_thresh)
 
-    iter = ImageSourceIter(args.input)
+    # iter = ImageSourceIter(args.input)
     if args.wandb_project is not None:
         from wandadb.wandb_logger import WandbInferenceLogger
 
@@ -217,30 +218,69 @@ if __name__ == "__main__":
     else:
         inference_logger = None
 
-    for i in trange(len(iter.srcs)):
-        im = next(iter)
-        if isinstance(im, str):
-            image_path = im
-            im = cv2.imread(im)
-            res = predictor(im)
-            if inference_logger:
-                inference_logger.log_inference(image_path, res)
+    # Check if input is a video
+    try:
+        cap = cv2.VideoCapture(args.input)
+        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        video_path = pathlib.Path(args.input)
+        video_name = video_path.stem
 
-            res = vis_res_fast(res, im, class_names, colors, conf_thresh)
-        # cv2.imshow('frame', res)
-        if args.output:
-            if pathlib.Path(args.output).is_dir():
-                out_path = pathlib.Path(args.output) / pathlib.Path(image_path).name
+        out = cv2.VideoWriter(f"{video_path.parent.as_posix()}/{video_name}_inference.avi", cv2.VideoWriter_fourcc(*"DIVX"), fps, (width, height))
+        count = 0
+
+        while cap.isOpened():
+            
+            ret, im = cap.read()
+            if ret:
+                res = predictor(im)
+                
+                if inference_logger:
+                    inference_logger.log_inference(image_path, res)
+                
+                res = vis_res_fast(res, im, class_names, colors, conf_thresh)
+                cv2.imshow("Inference", res)
+                out.write(res)
+                
+                count += 1
+                if count == 17999:
+                    break
+
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+        cap.release()
+        out.release()
+
+    except:
+        
+        for i in trange(len(iter.srcs)):
+            im = next(iter)
+            if isinstance(im, str):
+                image_path = im
+                im = cv2.imread(im)
+                res = predictor(im)
+                if inference_logger:
+                    inference_logger.log_inference(image_path, res)
+
+                res = vis_res_fast(res, im, class_names, colors, conf_thresh)
+            # cv2.imshow('frame', res)
+            if args.output:
+                if pathlib.Path(args.output).is_dir():
+                    out_path = pathlib.Path(args.output) / pathlib.Path(image_path).name
+                else:
+                    out_path = args.output
+                _ = cv2.imwrite(out_path.as_posix(), res)
             else:
-                out_path = args.output
-        else:
-            out_path = "frame"
-        cv2.imshow(out_path, res)
+                out_path = "frame"
+                cv2.imshow(out_path, res)
 
-        if iter.video_mode:
-            cv2.waitKey(1)
-        else:
-            if cv2.waitKey(0) & 0xFF == ord("q"):
-                continue
-    if inference_logger:
-        inference_logger.finish_run()
+            if iter.video_mode:
+                cv2.waitKey(1)
+            else:
+                if cv2.waitKey(0) & 0xFF == ord("q"):
+                    continue
+        if inference_logger:
+            inference_logger.finish_run()
+            
+    cv2.destroyAllWindows()
